@@ -2,35 +2,23 @@ import configparser
 import os
 import sys
 
-import tempfile
-import errno
-
 import requests
 
 from bs4 import BeautifulSoup
 
+import archiver
+import helpers
+
 config = None
 dspace = None
 _inited = False
-
-# http://stackoverflow.com/a/25868839
-def isWritable(path):
-  try:
-    testfile = tempfile.TemporaryFile(dir = path)
-    testfile.close()
-  except OSError as e:
-    if e.errno == errno.EACCES:  # 13
-      return False
-    e.filename = path
-    raise
-  return True
 
 def pathcheck(path):
   if not os.path.exists(path):
     print ("config[common]: path does not exist!")
     return False
 
-  if isWritable(path):
+  if helpers.isWritable(path):
     return True
 
   return False # uh?
@@ -68,19 +56,13 @@ def preconfig():
   if config['common'].get('tasks') == None:
     config['common']['tasks'] = "4"
 
-def getdsp():
-  global config, dspace
-  dsp = dict(dspace.items(config['dspace']['parser'], True))
-  dsp.update({'root' : config['dspace']['href']})
-  return dsp
-
 def test():
-  global config, dspace
+  global _inited, config, dspace
 
   if _inited == False:
     preconfig()
 
-  dsp = getdsp()
+  dsp = helpers.getdsp(config, dspace)
   dspcore = dsp['root'] + dsp['core'];
 
   ret = requests.get(dspcore)
@@ -101,3 +83,17 @@ def test():
   config['dspace']['version'] = str(generator.split(' ')[1:]) # future?
 
   print("%s running %s" % (dsp['root'], generator))
+
+def init():
+  global config, dspace
+
+  test() # meh.
+
+  archiver.init(config, dspace)
+
+def sync():
+  global config, dspace
+
+  test() # meh.
+
+  archiver.sync(config, dspace)

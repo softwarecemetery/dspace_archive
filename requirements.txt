@@ -2,3 +2,4 @@ beautifulsoup4
 configparser
 argparse
 requests
+progressbar2
