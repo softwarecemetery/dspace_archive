@@ -13,7 +13,13 @@ import io
 
 import re
 
-import progressbar
+from tqdm import tqdm
+
+from multiprocessing import Pool
+
+import time # remove later
+
+import urllib.request
 
 import helpers
 
@@ -108,8 +114,7 @@ def parsetitles(href):
   for table in bs.find_all('table', {'class' : 'miscTable'}):
     data = table.find_all('tr')
 
-    bar = progressbar.ProgressBar()
-    for record in bar(data[1:]): # first table is th
+    for record in tqdm(data[1:]): # first table is th
       a = record.find('td', attrs={"headers":"t2"}).find('a')
       titles[a['href'].split('/')[-1]] = a.contents[0]
 
@@ -164,5 +169,116 @@ def init(config, dspace):
     data = json.dumps(titles, ensure_ascii=False)
     f.write(data)
 
+def handlefetch(params):
+  (dsp, handle, title) = params
+
+  print("%s - %s" % (handle, title))
+
+  # fix the handleid
+  href = dsp['root'] + dsp['core'] + dsp['handle'] + '/' + handle + '?mode=full'
+
+  # get folder name
+  st = str(int(handle) // 1000).zfill(4)
+
+  # directory
+  directory = dsp['path'] + os.path.sep + st + os.path.sep + handle
+
+  # check if path exists
+  if (os.path.exists(directory)) == False:
+    os.makedirs(directory)
+
+  jpath = directory + '/info.json';
+  if os.path.exists(jpath):
+    with io.open(jpath, 'r', encoding='utf8') as f:
+      try:
+        data = json.load(f)
+      except:
+        pass
+
+  ret = requests.get(href)
+
+  if ret.status_code != 200:
+    print("cannot access '%s': error code [%d]" % (href, ret.status_code))
+    sys.exit()
+
+  bs = BeautifulSoup(ret.content, "html.parser")
+
+  table = bs.find('table', {'class' : 'itemDisplayTable'});
+  meta_s = table.find_all('tr')
+  data = {}
+
+  for meta in meta_s[1:]:
+    label = meta.find('td', {'class' : 'metadataFieldLabel'}).text.encode('utf-8')
+    value = meta.find('td', {'class' : 'metadataFieldValue'}).text.encode('utf-8')
+
+    if label in data:
+      if (type(data[label]) != 'list'):
+        data[label] = [data[label]]
+      data[label].append(value)
+    else:
+      data[label] = value
+
+  urlhref = []
+  for td in bs.find_all('td', {'class' : 'standard'}):
+    if (td.find('a') is not None):
+      url = td.find('a').get('href').encode('utf-8')
+      if url in urlhref:
+        continue
+      urlhref.append(url)
+
+  data['href'] = urlhref
+
+  for key in data.keys():
+    if type(key) is not str:
+      try:
+        data[str(key)] = data[key]
+      except:
+        try:
+          data[repr(key)] = data[key]
+        except:
+          pass
+    del data[key]
+
+  print(data)
+  with io.open(jpath, 'w', encoding='utf8') as f:
+    d_string = json.dumps(data, ensure_ascii=False)
+    f.write(d_string)
+
+
+  # multi this?
+  for xref in urlhref:
+
+    # print(dsp['root'] + xref.decode('utf-8'), directory);
+
+    filename = directory + '/' + xref.decode('utf-8').split('/' + handle + '/')[1]
+    if (os.path.exists(os.path.dirname(filename))) == False:
+      os.makedirs(os.path.dirname(filename))
+
+    # print (filename);
+
+    urllib.request.urlretrieve(dsp['root'] + xref.decode('utf-8'), filename);
+
+
+
 def sync(config, dspace):
-  print("sync")
+
+  dsp = helpers.getdsp(config, dspace)
+  dspcore = dsp['root'] + dsp['core'];
+
+  # load in titles
+  tfpath = config['common']['path'] + '/titles.json';
+  with io.open(tfpath, 'r', encoding='utf8') as f:
+    titles = json.load(f)
+
+  l = len(titles)
+
+  titles_list = [ (dsp, k, titles[k]) for k in titles ];
+
+  pool = Pool(processes=int(config['dspace']['tasks']))
+
+  print("syncing: ")
+
+  with tqdm(total=l) as pbar:
+    for i, _ in enumerate(pool.imap_unordered(handlefetch, titles_list), 1):
+      if i % 10 == 0:
+        pbar.update(10)
